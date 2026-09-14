@@ -11,8 +11,12 @@
 		"sourceMap": true,
 		"strict": true,
 		"moduleResolution": "bundler",
-		"types": [
-			"./worker-configuration.d.ts"
-		]
-	}
+		"types": ["./worker-configuration.d.ts"]
+	},
+	"exclude": [
+		"node_modules",
+		".svelte-kit/cloudflare",
+		".svelte-kit/cloudflare-tmp",
+		".svelte-kit/output"
+	]
 }

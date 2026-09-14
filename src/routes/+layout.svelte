@@ -1,56 +1,21 @@
 <script lang="ts">
 	import Header from './Header.svelte';
+	import { page } from '$app/state';
 	import './layout.css';
 
 	let { children } = $props();
+	let isEditor = $derived(page.url.pathname.startsWith('/project/'));
 </script>
 
-<div class="app">
-	<Header />
-	<main>{@render children()}</main>
-
-	<footer>
-		<p>
-			visit 
-			<a href="https://svelte.dev/docs/kit">svelte.dev/docs/kit</a>
-			to learn about SvelteKit
-		</p>
-	</footer>
+<div class="flex min-h-screen flex-col bg-slate-50 font-sans text-slate-900 antialiased">
+	{#if !isEditor}
+		<Header />
+		<main class="mx-auto w-full max-w-6xl flex-1 p-6">
+			{@render children()}
+		</main>
+	{:else}
+		<main class="flex h-screen w-full flex-1 flex-col overflow-hidden">
+			{@render children()}
+		</main>
+	{/if}
 </div>
-
-<style>
-	.app {
-		display: flex;
-		flex-direction: column;
-		min-height: 100vh;
-	}
-
-	main {
-		flex: 1;
-		display: flex;
-		flex-direction: column;
-		padding: 1rem;
-		width: 100%;
-		max-width: 64rem;
-		margin: 0 auto;
-		box-sizing: border-box;
-	}
-
-	footer {
-		display: flex;
-		flex-direction: column;
-		justify-content: center;
-		align-items: center;
-		padding: 12px;
-	}
-
-	footer a {
-		font-weight: bold;
-	}
-
-	@media (min-width: 480px) {
-		footer {
-			padding: 12px 0;
-		}
-	}
-</style>
