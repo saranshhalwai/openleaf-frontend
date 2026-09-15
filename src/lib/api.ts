@@ -25,6 +25,20 @@ export interface ProjectFile {
 	updatedAt: string;
 }
 
+export interface CompileJob {
+	id: string;
+	projectId: string;
+	userId?: string;
+	versionId: number;
+	status: 'queued' | 'running' | 'succeeded' | 'failed' | 'none';
+	pdfStorageKey?: string;
+	logStorageKey?: string;
+	errorMessage?: string;
+	startedAt?: string;
+	finishedAt?: string;
+	createdAt?: string;
+}
+
 export class ApiClient {
 	private token: string;
 
@@ -115,5 +129,43 @@ export class ApiClient {
 		return this.request<{ message: string }>(`/api/projects/${projectId}/files/${fileId}`, {
 			method: 'DELETE'
 		});
+	}
+
+	async compileProject(projectId: string): Promise<CompileJob> {
+		return this.request<CompileJob>(`/api/projects/${projectId}/compile`, {
+			method: 'POST'
+		});
+	}
+
+	async getCompileStatus(projectId: string): Promise<CompileJob> {
+		return this.request<CompileJob>(`/api/projects/${projectId}/compile/status`);
+	}
+
+	async getCompilePdfBlob(projectId: string): Promise<Blob> {
+		const headers = new Headers();
+		if (this.token) {
+			headers.set('Authorization', `Bearer ${this.token}`);
+		}
+		const response = await fetch(`${BACKEND_URL}/api/projects/${projectId}/compile/pdf`, {
+			headers
+		});
+		if (!response.ok) {
+			throw new Error('Failed to fetch compiled PDF');
+		}
+		return response.blob();
+	}
+
+	async getCompileLog(projectId: string): Promise<string> {
+		const headers = new Headers();
+		if (this.token) {
+			headers.set('Authorization', `Bearer ${this.token}`);
+		}
+		const response = await fetch(`${BACKEND_URL}/api/projects/${projectId}/compile/log`, {
+			headers
+		});
+		if (!response.ok) {
+			return '';
+		}
+		return response.text();
 	}
 }

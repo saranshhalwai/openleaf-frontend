@@ -14,7 +14,11 @@
 		FileCode,
 		Loader2,
 		PanelRightClose,
-		PanelRightOpen
+		PanelRightOpen,
+		FileText,
+		ExternalLink,
+		Terminal,
+		X
 	} from 'lucide-svelte';
 
 	let sessionToken = $derived(page.data.sessionToken);
@@ -33,6 +37,15 @@
 	// Autosave state
 	let saveStatus = $state<'saved' | 'saving' | 'unsaved'>('saved');
 	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+	// Compilation state (Phase 2)
+	let compileStatus = $state<'idle' | 'queued' | 'running' | 'succeeded' | 'failed'>('idle');
+	let compiling = $state(false);
+	let compileError = $state<string | null>(null);
+	let pdfUrl = $state<string | null>(null);
+	let buildLog = $state<string>('');
+	let showLogModal = $state(false);
+	let compilePollTimer: ReturnType<typeof setInterval> | null = null;
 
 	// UI layout
 	let showPreview = $state(true);
@@ -151,12 +164,106 @@
 		}
 	}
 
+	async function triggerCompilation() {
+		if (compiling) return;
+		if (saveStatus === 'unsaved' && activeFile) {
+			await saveCurrentFile();
+		}
+
+		compiling = true;
+		compileStatus = 'queued';
+		compileError = null;
+
+		try {
+			const job = await api.compileProject(projectId);
+			startPollingJob(job.id);
+		} catch (err: unknown) {
+			compiling = false;
+			compileStatus = 'failed';
+			compileError = err instanceof Error ? err.message : 'Failed to start compilation';
+		}
+	}
+
+	function startPollingJob(jobId: string) {
+		if (compilePollTimer) clearInterval(compilePollTimer);
+		let attempts = 0;
+
+		compilePollTimer = setInterval(async () => {
+			attempts++;
+			try {
+				const status = await api.getCompileStatus(projectId);
+				if (status.status === 'succeeded') {
+					if (compilePollTimer) clearInterval(compilePollTimer);
+					compilePollTimer = null;
+					compiling = false;
+					compileStatus = 'succeeded';
+					await loadPdfPreview();
+				} else if (status.status === 'failed') {
+					if (compilePollTimer) clearInterval(compilePollTimer);
+					compilePollTimer = null;
+					compiling = false;
+					compileStatus = 'failed';
+					compileError = status.errorMessage || 'Compilation failed. Check build logs.';
+					try {
+						buildLog = await api.getCompileLog(projectId);
+					} catch {
+						// Ignore log error
+					}
+				} else if (attempts > 90) {
+					if (compilePollTimer) clearInterval(compilePollTimer);
+					compilePollTimer = null;
+					compiling = false;
+					compileStatus = 'failed';
+					compileError = 'Compilation timed out after 90 seconds.';
+				}
+			} catch (e) {
+				console.error('Error polling compile status:', e);
+			}
+		}, 1500);
+	}
+
+	async function loadPdfPreview() {
+		try {
+			const blob = await api.getCompilePdfBlob(projectId);
+			if (pdfUrl) {
+				URL.revokeObjectURL(pdfUrl);
+			}
+			pdfUrl = URL.createObjectURL(blob);
+		} catch (err) {
+			console.error('Failed to load compiled PDF preview:', err);
+		}
+	}
+
+	async function checkInitialCompilation() {
+		try {
+			const status = await api.getCompileStatus(projectId);
+			if (status && status.status === 'succeeded') {
+				compileStatus = 'succeeded';
+				await loadPdfPreview();
+			}
+		} catch {
+			// No prior compilation, ignore
+		}
+	}
+
+	async function openBuildLogs() {
+		try {
+			buildLog = await api.getCompileLog(projectId);
+		} catch {
+			buildLog = 'No compilation log available.';
+		}
+		showLogModal = true;
+	}
+
 	onMount(() => {
 		loadProjectData();
+		checkInitialCompilation();
 	});
 
 	onDestroy(() => {
 		if (debounceTimer) clearTimeout(debounceTimer);
+		if (compilePollTimer) clearInterval(compilePollTimer);
+		if (pdfUrl) URL.revokeObjectURL(pdfUrl);
 	});
 </script>
 
@@ -215,16 +322,18 @@
 			<!-- Compile Button -->
 			<button
 				type="button"
-				class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs transition hover:bg-emerald-700"
-				title="Compile PDF (Phase 2)"
-				onclick={() => {
-					alert(
-						'LaTeX Compilation pipeline is scheduled for Phase 2! Cloud Tasks + Cloud Run LaTeX sandbox will compile the project and render live PDF previews.'
-					);
-				}}
+				disabled={compiling}
+				class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs transition hover:bg-emerald-700 disabled:opacity-75"
+				title="Compile LaTeX Document"
+				onclick={triggerCompilation}
 			>
-				<Play class="h-3.5 w-3.5 fill-current" />
-				<span>Recompile</span>
+				{#if compiling}
+					<Loader2 class="h-3.5 w-3.5 animate-spin" />
+					<span>Compiling...</span>
+				{:else}
+					<Play class="h-3.5 w-3.5 fill-current" />
+					<span>Recompile</span>
+				{/if}
 			</button>
 
 			<!-- Toggle Split View -->
@@ -347,50 +456,118 @@
 			{/if}
 		</div>
 
-		<!-- Right: PDF Preview Placeholder (Phase 2 ready) -->
+		<!-- Right: Live PDF Preview Pane -->
 		{#if showPreview}
-			<div class="flex w-[45%] flex-col overflow-hidden border-l border-slate-200 bg-slate-100">
+			<div class="relative flex w-[45%] flex-col overflow-hidden border-l border-slate-200 bg-slate-100">
+				<!-- Preview Header -->
 				<div
 					class="flex h-8 shrink-0 items-center justify-between border-b border-slate-300 bg-slate-200/80 px-3 text-xs font-medium text-slate-600"
 				>
-					<span>PDF Document Preview</span>
-					<span class="rounded bg-slate-300 px-1.5 py-0.5 font-mono text-[10px]"
-						>Phase 2 Target</span
-					>
+					<div class="flex items-center gap-2">
+						<FileText class="h-3.5 w-3.5 text-slate-500" />
+						<span class="font-semibold text-slate-700">PDF Preview</span>
+						{#if compileStatus === 'succeeded'}
+							<span class="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800">
+								<CheckCircle2 class="h-2.5 w-2.5 text-emerald-600" />
+								<span>Up to date</span>
+							</span>
+						{:else if compileStatus === 'failed'}
+							<button
+								type="button"
+								onclick={openBuildLogs}
+								class="inline-flex cursor-pointer items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-800 transition hover:bg-rose-200"
+								title="Click to view build error log"
+							>
+								<AlertCircle class="h-2.5 w-2.5 text-rose-600" />
+								<span>Error (view log)</span>
+							</button>
+						{/if}
+					</div>
+
+					<div class="flex items-center gap-1.5">
+						{#if pdfUrl}
+							<a
+								href={pdfUrl}
+								target="_blank"
+								rel="noreferrer"
+								class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-slate-600 transition hover:bg-slate-300 hover:text-slate-900"
+								title="Open PDF in new tab"
+							>
+								<ExternalLink class="h-3 w-3" />
+								<span>Pop out</span>
+							</a>
+						{/if}
+						<button
+							type="button"
+							onclick={openBuildLogs}
+							class="inline-flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-slate-600 transition hover:bg-slate-300 hover:text-slate-900"
+							title="View raw LaTeX build log"
+						>
+							<Terminal class="h-3 w-3" />
+							<span>Logs</span>
+						</button>
+					</div>
 				</div>
 
-				<div class="flex flex-1 flex-col items-center justify-center p-8 text-center">
-					<div
-						class="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-slate-200 bg-white text-3xl shadow-xs"
-					>
-						📄
-					</div>
-					<h4 class="text-sm font-bold text-slate-800">LaTeX Compilation Pipeline</h4>
-					<p class="mt-1 max-w-sm text-xs text-slate-500">
-						In Phase 2, clicking <strong>Recompile</strong> dispatches a Cloud Tasks job to the sandboxed
-						Cloud Run LaTeX runner, rendering the compiled PDF preview here via PDF.js.
-					</p>
+				<!-- Preview Content Area -->
+				<div class="relative flex flex-1 flex-col overflow-hidden bg-slate-200/50">
+					{#if compiling}
+						<div class="absolute inset-0 z-20 flex flex-col items-center justify-center bg-white/85 backdrop-blur-xs">
+							<div class="flex flex-col items-center gap-3 rounded-2xl border border-slate-100 bg-white p-6 shadow-xl">
+								<Loader2 class="h-8 w-8 animate-spin text-emerald-600" />
+								<div class="text-center">
+									<h4 class="text-xs font-bold text-slate-900">Compiling LaTeX document...</h4>
+									<p class="mt-1 text-[11px] text-slate-500">Executing via Cloud Tasks & TeX Live Sandbox</p>
+								</div>
+							</div>
+						</div>
+					{/if}
 
-					<div
-						class="mt-6 w-full max-w-xs space-y-2 rounded-xl border border-slate-200 bg-white p-4 text-left text-xs shadow-2xs"
-					>
-						<div class="flex items-center gap-2 text-slate-700">
-							<span class="h-2 w-2 rounded-full bg-emerald-500"></span>
-							<span>1. Project Source Archive (GCS)</span>
+					{#if compileStatus === 'failed'}
+						<div class="flex flex-1 flex-col items-center justify-center p-6 text-center">
+							<div class="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-100 text-rose-600">
+								<AlertCircle class="h-6 w-6" />
+							</div>
+							<h4 class="text-sm font-bold text-slate-800">Compilation Failed</h4>
+							<p class="mt-2 max-w-sm text-xs text-rose-700 font-mono bg-rose-50 border border-rose-200 rounded-lg p-3 text-left leading-relaxed">
+								{compileError || 'Unknown compiler error occurred.'}
+							</p>
+							<button
+								type="button"
+								onclick={openBuildLogs}
+								class="mt-4 inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white shadow-xs transition hover:bg-slate-900"
+							>
+								<Terminal class="h-3.5 w-3.5" />
+								<span>View Full Build Log</span>
+							</button>
 						</div>
-						<div class="flex items-center gap-2 text-slate-700">
-							<span class="h-2 w-2 rounded-full bg-blue-500"></span>
-							<span>2. Cloud Tasks Queue</span>
+					{:else if pdfUrl}
+						<iframe
+							src={pdfUrl}
+							title="Compiled PDF Preview"
+							class="h-full w-full border-0 bg-white"
+						></iframe>
+					{:else}
+						<div class="flex flex-1 flex-col items-center justify-center p-8 text-center">
+							<div
+								class="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-slate-200 bg-white text-3xl shadow-xs"
+							>
+								📄
+							</div>
+							<h4 class="text-sm font-bold text-slate-800">No PDF Generated Yet</h4>
+							<p class="mt-1 max-w-sm text-xs text-slate-500">
+								Click <strong>Recompile</strong> in the top bar to build and render the PDF document.
+							</p>
+							<button
+								type="button"
+								onclick={triggerCompilation}
+								class="mt-4 inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs transition hover:bg-emerald-700"
+							>
+								<Play class="h-3.5 w-3.5 fill-current" />
+								<span>Compile Now</span>
+							</button>
 						</div>
-						<div class="flex items-center gap-2 text-slate-700">
-							<span class="h-2 w-2 rounded-full bg-indigo-500"></span>
-							<span>3. LaTeX Sandbox Container</span>
-						</div>
-						<div class="flex items-center gap-2 text-slate-700">
-							<span class="h-2 w-2 rounded-full bg-emerald-500"></span>
-							<span>4. PDF.js Live Viewer</span>
-						</div>
-					</div>
+					{/if}
 				</div>
 			</div>
 		{/if}
@@ -457,6 +634,47 @@
 					</button>
 				</div>
 			</form>
+		</div>
+	</div>
+{/if}
+
+<!-- Build Log Modal -->
+{#if showLogModal}
+	<div
+		class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs"
+	>
+		<div
+			class="animate-in fade-in zoom-in-95 flex h-[80vh] w-full max-w-3xl flex-col rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl duration-150"
+		>
+			<div class="flex items-center justify-between border-b border-slate-800 px-4 py-3 text-slate-300">
+				<div class="flex items-center gap-2 font-mono text-xs">
+					<Terminal class="h-4 w-4 text-emerald-400" />
+					<span class="font-bold text-white">LaTeX Compilation Log</span>
+				</div>
+				<button
+					type="button"
+					onclick={() => {
+						showLogModal = false;
+					}}
+					class="cursor-pointer rounded-lg p-1 text-slate-400 transition hover:bg-slate-800 hover:text-white"
+				>
+					<X class="h-4 w-4" />
+				</button>
+			</div>
+			<div class="flex-1 overflow-auto p-4 font-mono text-xs leading-relaxed text-slate-300 select-text">
+				<pre class="whitespace-pre-wrap">{buildLog || 'No log output available.'}</pre>
+			</div>
+			<div class="flex justify-end border-t border-slate-800 bg-slate-950/60 px-4 py-2.5">
+				<button
+					type="button"
+					onclick={() => {
+						showLogModal = false;
+					}}
+					class="cursor-pointer rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:bg-slate-700 hover:text-white"
+				>
+					Close
+				</button>
+			</div>
 		</div>
 	</div>
 {/if}
