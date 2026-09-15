@@ -1,6 +1,6 @@
 {
 	"$schema": "./node_modules/wrangler/config-schema.json",
-	"name": "frontend",
+	"name": "openleaf-frontend",
 	"compatibility_date": "2026-09-14",
 	"compatibility_flags": ["nodejs_als"],
 	"main": ".svelte-kit/cloudflare/_worker.js",
@@ -8,6 +8,13 @@
 		"binding": "ASSETS",
 		"directory": ".svelte-kit/cloudflare"
 	},
+	"vars": {
+		"PUBLIC_BACKEND_URL": "https://openleaf-backend-17671319887.asia-southeast1.run.app",
+		"ORIGIN": "https://openleaf.saranshhalwai.me"
+	},
+	"routes": [
+		{ "pattern": "openleaf.saranshhalwai.me", "custom_domain": true }
+	],
 	"workers_dev": true,
 	"preview_urls": true
 }
