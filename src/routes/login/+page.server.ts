@@ -64,5 +64,33 @@ export const actions: Actions = {
 			headers: event.request.headers
 		});
 		return redirect(302, '/login');
+	},
+
+	signInSocial: async (event) => {
+		const formData = await event.request.formData();
+		const provider = formData.get('provider')?.toString() as 'github' | 'google';
+		if (!provider || (provider !== 'github' && provider !== 'google')) {
+			return fail(400, { message: 'Invalid OAuth provider' });
+		}
+
+		try {
+			const res = await auth.api.signInSocial({
+				body: {
+					provider,
+					callbackURL: '/'
+				},
+				headers: event.request.headers
+			});
+			if (res?.url) {
+				return redirect(302, res.url);
+			}
+		} catch (error) {
+			if (error instanceof APIError) {
+				return fail(400, { message: error.message || `${provider} login failed` });
+			}
+			return fail(500, { message: `Unexpected error during ${provider} login` });
+		}
+
+		return redirect(302, '/');
 	}
 };
