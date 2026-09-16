@@ -2,8 +2,9 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
-	import { ApiClient, type Project, type ProjectFile } from '$lib/api';
+	import { ApiClient, BACKEND_URL, type Project, type ProjectFile } from '$lib/api';
 	import LatexEditor from '$lib/components/LatexEditor.svelte';
+	import { CollabProvider, type UserPresence } from '$lib/collab/provider';
 	import {
 		ArrowLeft,
 		Plus,
@@ -22,6 +23,7 @@
 	} from 'lucide-svelte';
 
 	let sessionToken = $derived(page.data.sessionToken);
+	let currentUser = $derived(page.data.user);
 	let projectId = $derived(page.params.id as string);
 
 	let api = $derived(new ApiClient(sessionToken || ''));
@@ -33,6 +35,13 @@
 	let fileContent = $state<string>('');
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+
+	// Collaboration state (Phase 3)
+	let collabProvider = $state<CollabProvider | null>(null);
+	let collabStatus = $state<'connecting' | 'connected' | 'disconnected'>('disconnected');
+	let activeCollaborators = $state<UserPresence[]>([]);
+	let cleanupStatusListener: (() => void) | null = null;
+	let cleanupAwarenessListener: (() => void) | null = null;
 
 	// Autosave state
 	let saveStatus = $state<'saved' | 'saving' | 'unsaved'>('saved');
@@ -82,11 +91,40 @@
 			await saveCurrentFile();
 		}
 
+		// Tear down active collaboration session before switching
+		if (cleanupStatusListener) cleanupStatusListener();
+		if (cleanupAwarenessListener) cleanupAwarenessListener();
+		if (collabProvider) {
+			collabProvider.destroy();
+			collabProvider = null;
+		}
+		collabStatus = 'disconnected';
+		activeCollaborators = [];
+
 		try {
 			const fullFile = await api.getFile(projectId, file.id);
 			activeFile = fullFile;
 			fileContent = fullFile.content || '';
 			saveStatus = 'saved';
+
+			// Start collaboration session if user and sessionToken exist
+			if (sessionToken && currentUser) {
+				const provider = new CollabProvider(
+					BACKEND_URL,
+					projectId,
+					fullFile.id,
+					sessionToken,
+					{ id: currentUser.id, name: currentUser.name || 'Anonymous' },
+					fullFile.content || ''
+				);
+				cleanupStatusListener = provider.onStatusChange((status) => {
+					collabStatus = status;
+				});
+				cleanupAwarenessListener = provider.onAwarenessChange((users) => {
+					activeCollaborators = users;
+				});
+				collabProvider = provider;
+			}
 		} catch (err: unknown) {
 			alert(err instanceof Error ? err.message : 'Failed to open file');
 		}
@@ -264,6 +302,12 @@
 		if (debounceTimer) clearTimeout(debounceTimer);
 		if (compilePollTimer) clearInterval(compilePollTimer);
 		if (pdfUrl) URL.revokeObjectURL(pdfUrl);
+		if (cleanupStatusListener) cleanupStatusListener();
+		if (cleanupAwarenessListener) cleanupAwarenessListener();
+		if (collabProvider) {
+			collabProvider.destroy();
+			collabProvider = null;
+		}
 	});
 </script>
 
@@ -303,6 +347,52 @@
 
 		<!-- Actions / Status -->
 		<div class="flex items-center gap-3">
+			<!-- Real-time Collaboration Status & Presence -->
+			<div class="flex items-center gap-2">
+				{#if collabStatus === 'connected'}
+					<div
+						class="flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-600/20"
+						title="Connected to real-time collaboration room"
+					>
+						<span class="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+						<span>Live</span>
+					</div>
+				{:else if collabStatus === 'connecting'}
+					<div
+						class="flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-600/20"
+						title="Connecting to collaboration room..."
+					>
+						<span class="h-2 w-2 rounded-full bg-amber-500 animate-ping"></span>
+						<span>Connecting</span>
+					</div>
+				{:else}
+					<div
+						class="flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-medium text-slate-500"
+						title="Collaboration disconnected (working offline)"
+					>
+						<span class="h-2 w-2 rounded-full bg-slate-400"></span>
+						<span>Offline</span>
+					</div>
+				{/if}
+
+				<!-- Active Collaborators Avatars -->
+				{#if activeCollaborators.length > 0}
+					<div class="flex items-center -space-x-1.5 overflow-hidden pl-1">
+						{#each activeCollaborators as user (user.id)}
+							<div
+								class="flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold text-white shadow-2xs ring-2 ring-white"
+								style="background-color: {user.color};"
+								title="{user.name} is editing this file"
+							>
+								{user.name.slice(0, 1).toUpperCase()}
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</div>
+
+			<div class="h-4 w-px bg-slate-200"></div>
+
 			<!-- Save Indicator -->
 			<div class="flex items-center gap-1.5 text-xs text-slate-500">
 				{#if saveStatus === 'saving'}
@@ -435,7 +525,11 @@
 		<div class="flex flex-1 flex-col overflow-hidden bg-white">
 			{#if activeFile}
 				<div class="flex-1 overflow-hidden">
-					<LatexEditor content={fileContent} onchange={handleContentChange} />
+					<LatexEditor
+						content={fileContent}
+						provider={collabProvider}
+						onchange={handleContentChange}
+					/>
 				</div>
 				<!-- Editor Status Bar -->
 				<div

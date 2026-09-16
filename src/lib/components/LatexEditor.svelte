@@ -2,14 +2,17 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { EditorView, basicSetup } from 'codemirror';
 	import { EditorState } from '@codemirror/state';
+	import { yCollab } from 'y-codemirror.next';
+	import type { CollabProvider } from '$lib/collab/provider';
 
 	interface Props {
 		content: string;
 		readOnly?: boolean;
+		provider?: CollabProvider | null;
 		onchange?: (newContent: string) => void;
 	}
 
-	let { content, readOnly = false, onchange }: Props = $props();
+	let { content, readOnly = false, provider = null, onchange }: Props = $props();
 
 	let editorContainer: HTMLDivElement;
 	let view: EditorView | null = null;
@@ -47,28 +50,61 @@
 		},
 		'.cm-activeLine': {
 			backgroundColor: '#f8fafc'
+		},
+		'.cm-ySelection': {
+			mixBlendMode: 'multiply'
+		},
+		'.cm-ySelectionInfo': {
+			position: 'absolute',
+			top: '-1.3em',
+			left: '-1px',
+			fontSize: '10px',
+			fontFamily: 'sans-serif',
+			fontWeight: '600',
+			lineHeight: 'normal',
+			userSelect: 'none',
+			color: '#ffffff',
+			padding: '1px 5px',
+			borderRadius: '3px',
+			whiteSpace: 'nowrap',
+			zIndex: '20',
+			boxShadow: '0 1px 2px rgba(0,0,0,0.15)',
+			pointerEvents: 'none'
 		}
 	});
 
-	function createEditor(initialDoc: string) {
+	function createEditor(initialDoc: string, currentProvider: CollabProvider | null) {
 		if (!editorContainer) return;
-		if (view) view.destroy();
+		if (view) {
+			view.destroy();
+			view = null;
+		}
+
+		const extensions = [
+			basicSetup,
+			theme,
+			EditorState.readOnly.of(readOnly)
+		];
+
+		if (currentProvider) {
+			const ytext = currentProvider.doc.getText('codemirror');
+			extensions.push(yCollab(ytext, currentProvider.awareness));
+		}
+
+		extensions.push(
+			EditorView.updateListener.of((update) => {
+				if (update.docChanged && !internalUpdate) {
+					const docText = update.state.doc.toString();
+					if (onchange) {
+						onchange(docText);
+					}
+				}
+			})
+		);
 
 		const state = EditorState.create({
-			doc: initialDoc,
-			extensions: [
-				basicSetup,
-				theme,
-				EditorState.readOnly.of(readOnly),
-				EditorView.updateListener.of((update) => {
-					if (update.docChanged && !internalUpdate) {
-						const docText = update.state.doc.toString();
-						if (onchange) {
-							onchange(docText);
-						}
-					}
-				})
-			]
+			doc: currentProvider ? undefined : initialDoc,
+			extensions
 		});
 
 		view = new EditorView({
@@ -77,9 +113,18 @@
 		});
 	}
 
-	// Update editor doc when the active file or content changes externally
+	// Recreate editor when provider instance changes (e.g. switching files)
+	let lastProvider: CollabProvider | null = null;
 	$effect(() => {
-		if (view && content !== view.state.doc.toString()) {
+		if (provider !== lastProvider) {
+			lastProvider = provider;
+			createEditor(content, provider);
+		}
+	});
+
+	// If running without collaboration provider, update editor when content changes externally
+	$effect(() => {
+		if (!provider && view && content !== view.state.doc.toString()) {
 			internalUpdate = true;
 			view.dispatch({
 				changes: {
@@ -93,7 +138,7 @@
 	});
 
 	onMount(() => {
-		createEditor(content);
+		createEditor(content, provider);
 	});
 
 	onDestroy(() => {

@@ -2,7 +2,7 @@
 
 import { env } from '$env/dynamic/public';
 
-const BACKEND_URL = env.PUBLIC_BACKEND_URL || 'http://localhost:8080';
+export const BACKEND_URL = env.PUBLIC_BACKEND_URL || 'http://localhost:8080';
 
 export interface Project {
 	id: string;
