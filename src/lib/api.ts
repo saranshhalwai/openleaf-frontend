@@ -14,6 +14,14 @@ export interface Project {
 	updatedAt: string;
 }
 
+export interface ProjectMember {
+	userId: string;
+	email: string;
+	name: string;
+	role: 'owner' | 'editor' | 'viewer';
+	createdAt: string;
+}
+
 export interface ProjectFile {
 	id: string;
 	projectId: string;
@@ -167,5 +175,26 @@ export class ApiClient {
 			return '';
 		}
 		return response.text();
+	}
+
+	async listMembers(projectId: string): Promise<ProjectMember[]> {
+		return this.request<ProjectMember[]>(`/api/projects/${projectId}/members`);
+	}
+
+	async addMember(
+		projectId: string,
+		email: string,
+		role: 'editor' | 'viewer' = 'editor'
+	): Promise<ProjectMember> {
+		return this.request<ProjectMember>(`/api/projects/${projectId}/members`, {
+			method: 'POST',
+			body: JSON.stringify({ email, role })
+		});
+	}
+
+	async removeMember(projectId: string, userId: string): Promise<{ message: string }> {
+		return this.request<{ message: string }>(`/api/projects/${projectId}/members/${userId}`, {
+			method: 'DELETE'
+		});
 	}
 }

@@ -2,7 +2,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
-	import { ApiClient, BACKEND_URL, type Project, type ProjectFile } from '$lib/api';
+	import { ApiClient, BACKEND_URL, type Project, type ProjectFile, type ProjectMember } from '$lib/api';
 	import LatexEditor from '$lib/components/LatexEditor.svelte';
 	import { CollabProvider, type UserPresence } from '$lib/collab/provider';
 	import {
@@ -19,7 +19,9 @@
 		FileText,
 		ExternalLink,
 		Terminal,
-		X
+		X,
+		UserPlus,
+		Users
 	} from 'lucide-svelte';
 
 	let sessionToken = $derived(page.data.sessionToken);
@@ -61,6 +63,58 @@
 	let showNewFileModal = $state(false);
 	let newFilePath = $state('');
 	let creatingFile = $state(false);
+
+	// Share / Collaboration modal state
+	let showShareModal = $state(false);
+	let projectMembers = $state<ProjectMember[]>([]);
+	let loadingMembers = $state(false);
+	let inviteEmail = $state('');
+	let inviteRole = $state<'editor' | 'viewer'>('editor');
+	let inviting = $state(false);
+	let inviteError = $state<string | null>(null);
+
+	async function openShareModal() {
+		showShareModal = true;
+		inviteError = null;
+		await loadMembers();
+	}
+
+	async function loadMembers() {
+		loadingMembers = true;
+		try {
+			projectMembers = await api.listMembers(projectId);
+		} catch (e) {
+			console.error('Failed to load members:', e);
+		} finally {
+			loadingMembers = false;
+		}
+	}
+
+	async function handleInvite(e: SubmitEvent) {
+		e.preventDefault();
+		if (!inviteEmail.trim() || inviting) return;
+		inviting = true;
+		inviteError = null;
+		try {
+			const newMember = await api.addMember(projectId, inviteEmail.trim(), inviteRole);
+			projectMembers = [...projectMembers.filter((m) => m.userId !== newMember.userId), newMember];
+			inviteEmail = '';
+		} catch (err: unknown) {
+			inviteError = err instanceof Error ? err.message : 'Failed to add collaborator';
+		} finally {
+			inviting = false;
+		}
+	}
+
+	async function handleRemoveMember(userId: string) {
+		if (!confirm('Are you sure you want to remove this collaborator?')) return;
+		try {
+			await api.removeMember(projectId, userId);
+			projectMembers = projectMembers.filter((m) => m.userId !== userId);
+		} catch (err: unknown) {
+			alert(err instanceof Error ? err.message : 'Failed to remove collaborator');
+		}
+	}
 
 	async function loadProjectData() {
 		loading = true;
@@ -408,6 +462,17 @@
 			</div>
 
 			<div class="h-4 w-px bg-slate-200"></div>
+
+			<!-- Share Button -->
+			<button
+				type="button"
+				onclick={openShareModal}
+				class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs transition hover:bg-slate-50 hover:text-slate-900"
+				title="Share project with collaborators"
+			>
+				<UserPlus class="h-3.5 w-3.5 text-emerald-600" />
+				<span>Share</span>
+			</button>
 
 			<!-- Compile Button -->
 			<button
@@ -768,6 +833,132 @@
 				>
 					Close
 				</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+<!-- Share Modal -->
+{#if showShareModal}
+	<div
+		class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs"
+	>
+		<div
+			class="animate-in fade-in zoom-in-95 flex w-full max-w-lg flex-col rounded-2xl border border-slate-100 bg-white p-6 shadow-2xl duration-150"
+		>
+			<div class="mb-4 flex items-center justify-between">
+				<div class="flex items-center gap-2.5">
+					<div
+						class="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700"
+					>
+						<Users class="h-4 w-4" />
+					</div>
+					<div>
+						<h3 class="text-base font-bold text-slate-900">Share "{project?.name}"</h3>
+						<p class="text-xs text-slate-500">Manage who has access to this project</p>
+					</div>
+				</div>
+				<button
+					type="button"
+					onclick={() => {
+						showShareModal = false;
+					}}
+					class="cursor-pointer rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+				>
+					<X class="h-4 w-4" />
+				</button>
+			</div>
+
+			<!-- Invite Form -->
+			<form onsubmit={handleInvite} class="mb-5 space-y-2">
+				<label for="inviteEmail" class="block text-xs font-semibold text-slate-700">Invite by email</label>
+				<div class="flex gap-2">
+					<input
+						type="email"
+						id="inviteEmail"
+						bind:value={inviteEmail}
+						placeholder="collaborator@example.com"
+						required
+						class="flex-1 rounded-lg border border-slate-300 px-3 py-1.5 text-xs focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:outline-none"
+					/>
+					<select
+						bind:value={inviteRole}
+						class="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-700 focus:border-emerald-500 focus:outline-none"
+					>
+						<option value="editor">Editor</option>
+						<option value="viewer">Viewer</option>
+					</select>
+					<button
+						type="submit"
+						disabled={inviting || !inviteEmail.trim()}
+						class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs transition hover:bg-emerald-700 disabled:opacity-50"
+					>
+						{#if inviting}
+							<Loader2 class="h-3.5 w-3.5 animate-spin" />
+						{:else}
+							<UserPlus class="h-3.5 w-3.5" />
+							<span>Invite</span>
+						{/if}
+					</button>
+				</div>
+				{#if inviteError}
+					<p class="text-xs font-medium text-rose-600">{inviteError}</p>
+				{/if}
+			</form>
+
+			<!-- Members List -->
+			<div class="border-t border-slate-200 pt-4">
+				<h4 class="mb-2 text-xs font-bold tracking-wider text-slate-600 uppercase">Members</h4>
+				<div class="max-h-60 space-y-2 overflow-y-auto">
+					{#if loadingMembers}
+						<div class="py-4 text-center text-xs text-slate-400">Loading members...</div>
+					{:else}
+						{#each projectMembers as member (member.userId)}
+							<div class="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2">
+								<div class="flex min-w-0 items-center gap-2.5">
+									<div
+										class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-xs font-bold text-white"
+									>
+										{(member.name || member.email).slice(0, 1).toUpperCase()}
+									</div>
+									<div class="truncate">
+										<div class="truncate text-xs font-semibold text-slate-800">
+											{member.name || 'User'}
+											{#if member.userId === currentUser?.id}
+												<span class="ml-1 font-normal text-slate-400 text-[10px]">(you)</span>
+											{/if}
+										</div>
+										<div class="truncate text-slate-400 text-[11px]">{member.email}</div>
+									</div>
+								</div>
+
+								<div class="flex items-center gap-2">
+									<span
+										class="rounded-full px-2 py-0.5 text-[10px] font-semibold capitalize {member.role ===
+										'owner'
+											? 'bg-amber-100 text-amber-800'
+											: member.role === 'editor'
+												? 'bg-emerald-100 text-emerald-800'
+												: 'bg-slate-200 text-slate-700'}"
+									>
+										{member.role}
+									</span>
+
+									{#if project?.role === 'owner' && member.role !== 'owner'}
+										<button
+											type="button"
+											onclick={() => handleRemoveMember(member.userId)}
+											class="cursor-pointer rounded p-1 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
+											title="Remove collaborator"
+										>
+											<Trash2 class="h-3.5 w-3.5" />
+										</button>
+									{/if}
+								</div>
+							</div>
+						{/each}
+					{/if}
+				</div>
 			</div>
 		</div>
 	</div>
