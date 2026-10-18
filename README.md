@@ -1,6 +1,6 @@
 # Openleaf Frontend 🍃
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-emerald.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/badge/release-v1.0.0-blue.svg)](https://github.com/saranshhalwai/openleaf-frontend/releases)
 
 The modern, ultra-responsive web application for **Openleaf** — an open-source collaborative LaTeX editor. Built on **SvelteKit 2** (with Svelte 5 runes) and deployed globally to **Cloudflare Workers**.
@@ -94,4 +94,4 @@ Runtime environment variables are configured in `wrangler.jsonc` and Cloudflare 
 
 ## 📄 License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the [Apache License, Version 2.0](LICENSE).
