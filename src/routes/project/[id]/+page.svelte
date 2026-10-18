@@ -21,7 +21,9 @@
 		Terminal,
 		X,
 		UserPlus,
-		Users
+		Users,
+		Eye,
+		Download
 	} from 'lucide-svelte';
 
 	let sessionToken = $derived(page.data.sessionToken);
@@ -32,6 +34,10 @@
 
 	// State
 	let project = $state<Project | null>(null);
+	let isViewer = $derived(project?.role === 'viewer');
+	let isOwner = $derived(project?.role === 'owner');
+	let canEdit = $derived(project?.role === 'owner' || project?.role === 'editor');
+
 	let files = $state<ProjectFile[]>([]);
 	let activeFile = $state<ProjectFile | null>(null);
 	let fileContent = $state<string>('');
@@ -161,8 +167,8 @@
 			fileContent = fullFile.content || '';
 			saveStatus = 'saved';
 
-			// Start collaboration session if user and sessionToken exist
-			if (sessionToken && currentUser) {
+			// Start collaboration session if user and sessionToken exist and user is not a read-only viewer
+			if (sessionToken && currentUser && !isViewer) {
 				const provider = new CollabProvider(
 					BACKEND_URL,
 					projectId,
@@ -185,6 +191,7 @@
 	}
 
 	function handleContentChange(newContent: string) {
+		if (isViewer) return;
 		fileContent = newContent;
 		saveStatus = 'unsaved';
 
@@ -195,7 +202,7 @@
 	}
 
 	async function saveCurrentFile() {
-		if (!activeFile || saveStatus === 'saving') return;
+		if (isViewer || !activeFile || saveStatus === 'saving') return;
 		saveStatus = 'saving';
 
 		try {
@@ -347,6 +354,20 @@
 		showLogModal = true;
 	}
 
+	let exportingZip = $state(false);
+
+	async function handleExportZip() {
+		if (!project || exportingZip) return;
+		exportingZip = true;
+		try {
+			await api.downloadProjectZip(projectId, project.name);
+		} catch (err: unknown) {
+			alert(err instanceof Error ? err.message : 'Failed to export project archive');
+		} finally {
+			exportingZip = false;
+		}
+	}
+
 	onMount(() => {
 		loadProjectData();
 		checkInitialCompilation();
@@ -401,67 +422,94 @@
 
 		<!-- Actions / Status -->
 		<div class="flex items-center gap-3">
-			<!-- Real-time Collaboration Status & Presence -->
-			<div class="flex items-center gap-2">
-				{#if collabStatus === 'connected'}
-					<div
-						class="flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-600/20"
-						title="Connected to real-time collaboration room"
-					>
-						<span class="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
-						<span>Live</span>
-					</div>
-				{:else if collabStatus === 'connecting'}
-					<div
-						class="flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-600/20"
-						title="Connecting to collaboration room..."
-					>
-						<span class="h-2 w-2 rounded-full bg-amber-500 animate-ping"></span>
-						<span>Connecting</span>
-					</div>
-				{:else}
-					<div
-						class="flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-medium text-slate-500"
-						title="Collaboration disconnected (working offline)"
-					>
-						<span class="h-2 w-2 rounded-full bg-slate-400"></span>
-						<span>Offline</span>
-					</div>
-				{/if}
+			{#if isViewer}
+				<div
+					class="flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-600/20"
+					title="You have read-only access to this project"
+				>
+					<Eye class="h-3.5 w-3.5 text-amber-600" />
+					<span>Viewer (Read Only)</span>
+				</div>
+			{:else}
+				<!-- Real-time Collaboration Status & Presence -->
+				<div class="flex items-center gap-2">
+					{#if collabStatus === 'connected'}
+						<div
+							class="flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-600/20"
+							title="Connected to real-time collaboration room"
+						>
+							<span class="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+							<span>Live</span>
+						</div>
+					{:else if collabStatus === 'connecting'}
+						<div
+							class="flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-600/20"
+							title="Connecting to collaboration room..."
+						>
+							<span class="h-2 w-2 rounded-full bg-amber-500 animate-ping"></span>
+							<span>Connecting</span>
+						</div>
+					{:else}
+						<div
+							class="flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-medium text-slate-500"
+							title="Collaboration disconnected (working offline)"
+						>
+							<span class="h-2 w-2 rounded-full bg-slate-400"></span>
+							<span>Offline</span>
+						</div>
+					{/if}
 
-				<!-- Active Collaborators Avatars -->
-				{#if activeCollaborators.length > 0}
-					<div class="flex items-center -space-x-1.5 overflow-hidden pl-1">
-						{#each activeCollaborators as user (user.id)}
-							<div
-								class="flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold text-white shadow-2xs ring-2 ring-white"
-								style="background-color: {user.color};"
-								title="{user.name} is editing this file"
-							>
-								{user.name.slice(0, 1).toUpperCase()}
-							</div>
-						{/each}
-					</div>
-				{/if}
-			</div>
+					<!-- Active Collaborators Avatars -->
+					{#if activeCollaborators.length > 0}
+						<div class="flex items-center -space-x-1.5 overflow-hidden pl-1">
+							{#each activeCollaborators as user (user.id)}
+								<div
+									class="flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold text-white shadow-2xs ring-2 ring-white"
+									style="background-color: {user.color};"
+									title="{user.name} is editing this file"
+								>
+									{user.name.slice(0, 1).toUpperCase()}
+								</div>
+							{/each}
+						</div>
+					{/if}
+				</div>
+
+				<div class="h-4 w-px bg-slate-200"></div>
+
+				<!-- Save Indicator -->
+				<div class="flex items-center gap-1.5 text-xs text-slate-500">
+					{#if saveStatus === 'saving'}
+						<Loader2 class="h-3.5 w-3.5 animate-spin text-emerald-600" />
+						<span class="text-[11px]">Saving...</span>
+					{:else if saveStatus === 'saved'}
+						<CheckCircle2 class="h-3.5 w-3.5 text-emerald-600" />
+						<span class="text-[11px]">All changes saved</span>
+					{:else}
+						<span class="h-2 w-2 rounded-full bg-amber-500"></span>
+						<span class="text-[11px] text-amber-700">Unsaved</span>
+					{/if}
+				</div>
+			{/if}
 
 			<div class="h-4 w-px bg-slate-200"></div>
 
-			<!-- Save Indicator -->
-			<div class="flex items-center gap-1.5 text-xs text-slate-500">
-				{#if saveStatus === 'saving'}
-					<Loader2 class="h-3.5 w-3.5 animate-spin text-emerald-600" />
-					<span class="text-[11px]">Saving...</span>
-				{:else if saveStatus === 'saved'}
-					<CheckCircle2 class="h-3.5 w-3.5 text-emerald-600" />
-					<span class="text-[11px]">All changes saved</span>
+			<!-- Export ZIP Button -->
+			<button
+				type="button"
+				onclick={handleExportZip}
+				disabled={exportingZip}
+				class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs transition hover:bg-slate-50 hover:text-slate-900 disabled:opacity-60"
+				title="Export project source files as .zip archive"
+			>
+				{#if exportingZip}
+					<Loader2 class="h-3.5 w-3.5 animate-spin text-slate-500" />
+					<span>Exporting...</span>
 				{:else}
-					<span class="h-2 w-2 rounded-full bg-amber-500"></span>
-					<span class="text-[11px] text-amber-700">Unsaved</span>
+					<Download class="h-3.5 w-3.5 text-slate-500" />
+					<span>Export ZIP</span>
 				{/if}
-			</div>
-
-			<div class="h-4 w-px bg-slate-200"></div>
+			</button>
 
 			<!-- Share Button -->
 			<button
@@ -525,16 +573,18 @@
 		<div class="flex w-60 shrink-0 flex-col border-r border-slate-200 bg-slate-50">
 			<div class="flex items-center justify-between border-b border-slate-200 p-3">
 				<span class="text-xs font-bold tracking-wider text-slate-500 uppercase">Project Files</span>
-				<button
-					type="button"
-					onclick={() => {
-						showNewFileModal = true;
-					}}
-					class="cursor-pointer rounded p-1 text-slate-600 transition hover:bg-slate-200 hover:text-emerald-700"
-					title="Add New File"
-				>
-					<Plus class="h-4 w-4" />
-				</button>
+				{#if !isViewer}
+					<button
+						type="button"
+						onclick={() => {
+							showNewFileModal = true;
+						}}
+						class="cursor-pointer rounded p-1 text-slate-600 transition hover:bg-slate-200 hover:text-emerald-700"
+						title="Add New File"
+					>
+						<Plus class="h-4 w-4" />
+					</button>
+				{/if}
 			</div>
 
 			<div class="flex-1 space-y-0.5 overflow-y-auto p-2">
@@ -563,7 +613,7 @@
 								<span class="truncate">{file.path}</span>
 							</div>
 
-							{#if file.id !== project?.rootFileId}
+							{#if !isViewer && file.id !== project?.rootFileId}
 								<button
 									type="button"
 									onclick={(e) => {
@@ -582,7 +632,14 @@
 			</div>
 
 			<div class="border-t border-slate-200 bg-white/50 p-3 text-[11px] text-slate-400">
-				Max 6 concurrent editors per file
+				{#if isViewer}
+					<span class="flex items-center gap-1.5 font-medium text-amber-700">
+						<Eye class="h-3.5 w-3.5 text-amber-600 shrink-0" />
+						<span>Read-only access</span>
+					</span>
+				{:else}
+					<span>Max 6 concurrent editors per file</span>
+				{/if}
 			</div>
 		</div>
 
@@ -592,8 +649,9 @@
 				<div class="flex-1 overflow-hidden">
 					<LatexEditor
 						content={fileContent}
-						provider={collabProvider}
-						onchange={handleContentChange}
+						readOnly={isViewer}
+						provider={isViewer ? null : collabProvider}
+						onchange={isViewer ? undefined : handleContentChange}
 					/>
 				</div>
 				<!-- Editor Status Bar -->
@@ -645,6 +703,17 @@
 
 					<div class="flex items-center gap-1.5">
 						{#if pdfUrl}
+							<a
+								href={pdfUrl}
+								download={`${project?.name || 'document'}.pdf`}
+								target="_blank"
+								rel="noreferrer"
+								class="inline-flex items-center gap-1 rounded bg-slate-300/80 px-2 py-0.5 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-300 hover:text-slate-900"
+								title="Download compiled PDF"
+							>
+								<Download class="h-3 w-3" />
+								<span>Download PDF</span>
+							</a>
 							<a
 								href={pdfUrl}
 								target="_blank"
@@ -870,41 +939,48 @@
 			</div>
 
 			<!-- Invite Form -->
-			<form onsubmit={handleInvite} class="mb-5 space-y-2">
-				<label for="inviteEmail" class="block text-xs font-semibold text-slate-700">Invite by email</label>
-				<div class="flex gap-2">
-					<input
-						type="email"
-						id="inviteEmail"
-						bind:value={inviteEmail}
-						placeholder="collaborator@example.com"
-						required
-						class="flex-1 rounded-lg border border-slate-300 px-3 py-1.5 text-xs focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:outline-none"
-					/>
-					<select
-						bind:value={inviteRole}
-						class="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-700 focus:border-emerald-500 focus:outline-none"
-					>
-						<option value="editor">Editor</option>
-						<option value="viewer">Viewer</option>
-					</select>
-					<button
-						type="submit"
-						disabled={inviting || !inviteEmail.trim()}
-						class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs transition hover:bg-emerald-700 disabled:opacity-50"
-					>
-						{#if inviting}
-							<Loader2 class="h-3.5 w-3.5 animate-spin" />
-						{:else}
-							<UserPlus class="h-3.5 w-3.5" />
-							<span>Invite</span>
-						{/if}
-					</button>
+			{#if canEdit}
+				<form onsubmit={handleInvite} class="mb-5 space-y-2">
+					<label for="inviteEmail" class="block text-xs font-semibold text-slate-700">Invite by email</label>
+					<div class="flex gap-2">
+						<input
+							type="email"
+							id="inviteEmail"
+							bind:value={inviteEmail}
+							placeholder="collaborator@example.com"
+							required
+							class="flex-1 rounded-lg border border-slate-300 px-3 py-1.5 text-xs focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:outline-none"
+						/>
+						<select
+							bind:value={inviteRole}
+							class="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-700 focus:border-emerald-500 focus:outline-none"
+						>
+							<option value="editor">Editor</option>
+							<option value="viewer">Viewer</option>
+						</select>
+						<button
+							type="submit"
+							disabled={inviting || !inviteEmail.trim()}
+							class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs transition hover:bg-emerald-700 disabled:opacity-50"
+						>
+							{#if inviting}
+								<Loader2 class="h-3.5 w-3.5 animate-spin" />
+							{:else}
+								<UserPlus class="h-3.5 w-3.5" />
+								<span>Invite</span>
+							{/if}
+						</button>
+					</div>
+					{#if inviteError}
+						<p class="text-xs font-medium text-rose-600">{inviteError}</p>
+					{/if}
+				</form>
+			{:else}
+				<div class="mb-5 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-800">
+					<Eye class="h-4 w-4 text-amber-600 shrink-0" />
+					<span>You have read-only access. Only project owners and editors can invite collaborators.</span>
 				</div>
-				{#if inviteError}
-					<p class="text-xs font-medium text-rose-600">{inviteError}</p>
-				{/if}
-			</form>
+			{/if}
 
 			<!-- Members List -->
 			<div class="border-t border-slate-200 pt-4">

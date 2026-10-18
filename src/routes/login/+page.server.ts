@@ -1,6 +1,6 @@
-import { fail, redirect } from '@sveltejs/kit';
+import { fail, redirect, isRedirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { auth } from '$lib/server/auth';
+import { getAuth } from '$lib/server/auth';
 import { APIError } from 'better-auth/api';
 
 export const load: PageServerLoad = (event) => {
@@ -15,6 +15,7 @@ export const actions: Actions = {
 		const formData = await event.request.formData();
 		const email = formData.get('email')?.toString() ?? '';
 		const password = formData.get('password')?.toString() ?? '';
+		const auth = getAuth(event.platform?.env);
 
 		try {
 			await auth.api.signInEmail({
@@ -25,6 +26,7 @@ export const actions: Actions = {
 				headers: event.request.headers
 			});
 		} catch (error) {
+			if (isRedirect(error)) throw error;
 			if (error instanceof APIError) {
 				return fail(400, { message: error.message || 'Login failed' });
 			}
@@ -40,26 +42,35 @@ export const actions: Actions = {
 		const email = formData.get('email')?.toString() ?? '';
 		const password = formData.get('password')?.toString() ?? '';
 
+		if (!email || !password) {
+			return fail(400, { message: 'Email and password are required' });
+		}
+
+		const auth = getAuth(event.platform?.env);
+
 		try {
 			await auth.api.signUpEmail({
 				body: {
 					name,
 					email,
-					password
+					password,
+					callbackURL: '/login?verified=true'
 				},
 				headers: event.request.headers
 			});
 		} catch (error) {
+			if (isRedirect(error)) throw error;
 			if (error instanceof APIError) {
 				return fail(400, { message: error.message || 'Registration failed' });
 			}
 			return fail(500, { message: 'Unexpected error occurred during signup' });
 		}
 
-		return redirect(302, '/');
+		return redirect(302, '/login?check-email=true');
 	},
 
 	signOut: async (event) => {
+		const auth = getAuth(event.platform?.env);
 		await auth.api.signOut({
 			headers: event.request.headers
 		});
@@ -73,6 +84,9 @@ export const actions: Actions = {
 			return fail(400, { message: 'Invalid OAuth provider' });
 		}
 
+		const auth = getAuth(event.platform?.env);
+		let redirectUrl: string | undefined;
+
 		try {
 			const res = await auth.api.signInSocial({
 				body: {
@@ -82,13 +96,19 @@ export const actions: Actions = {
 				headers: event.request.headers
 			});
 			if (res?.url) {
-				return redirect(302, res.url);
+				redirectUrl = res.url;
 			}
 		} catch (error) {
+			if (isRedirect(error)) throw error;
 			if (error instanceof APIError) {
 				return fail(400, { message: error.message || `${provider} login failed` });
 			}
+			console.error(`Unexpected error during ${provider} login:`, error);
 			return fail(500, { message: `Unexpected error during ${provider} login` });
+		}
+
+		if (redirectUrl) {
+			return redirect(302, redirectUrl);
 		}
 
 		return redirect(302, '/');

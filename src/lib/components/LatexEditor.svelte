@@ -83,27 +83,30 @@
 		const extensions = [
 			basicSetup,
 			theme,
-			EditorState.readOnly.of(readOnly)
+			EditorState.readOnly.of(readOnly),
+			EditorView.editable.of(!readOnly)
 		];
 
-		if (currentProvider) {
+		if (currentProvider && !readOnly) {
 			const ytext = currentProvider.doc.getText('codemirror');
 			extensions.push(yCollab(ytext, currentProvider.awareness));
 		}
 
-		extensions.push(
-			EditorView.updateListener.of((update) => {
-				if (update.docChanged && !internalUpdate) {
-					const docText = update.state.doc.toString();
-					if (onchange) {
-						onchange(docText);
+		if (!readOnly) {
+			extensions.push(
+				EditorView.updateListener.of((update) => {
+					if (update.docChanged && !internalUpdate) {
+						const docText = update.state.doc.toString();
+						if (onchange) {
+							onchange(docText);
+						}
 					}
-				}
-			})
-		);
+				})
+			);
+		}
 
 		const state = EditorState.create({
-			doc: currentProvider ? undefined : initialDoc,
+			doc: currentProvider && !readOnly ? undefined : initialDoc,
 			extensions
 		});
 
@@ -113,11 +116,13 @@
 		});
 	}
 
-	// Recreate editor when provider instance changes (e.g. switching files)
+	// Recreate editor when provider instance or readOnly mode changes
 	let lastProvider: CollabProvider | null = null;
+	let lastReadOnly = readOnly;
 	$effect(() => {
-		if (provider !== lastProvider) {
+		if (provider !== lastProvider || readOnly !== lastReadOnly) {
 			lastProvider = provider;
+			lastReadOnly = readOnly;
 			createEditor(content, provider);
 		}
 	});

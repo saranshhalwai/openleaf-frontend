@@ -4,7 +4,7 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { ApiClient, type Project } from '$lib/api';
-	import { Plus, Trash2, ExternalLink, RefreshCw, AlertCircle, Clock } from 'lucide-svelte';
+	import { Plus, Trash2, ExternalLink, RefreshCw, AlertCircle, Clock, Check, Download, Loader2 } from 'lucide-svelte';
 
 	let sessionToken = $derived(page.data.sessionToken);
 	let projects = $state<Project[]>([]);
@@ -14,8 +14,41 @@
 	// Create project modal state
 	let showCreateModal = $state(false);
 	let newProjectName = $state('');
+	let selectedTemplate = $state('article');
 	let creating = $state(false);
 	let createError = $state<string | null>(null);
+
+	const templates = [
+		{
+			id: 'article',
+			name: 'Standard Article',
+			description: 'Single-column article with abstract, math formulas, and numbered sections.',
+			category: 'General',
+			icon: '📄'
+		},
+		{
+			id: 'ieee',
+			name: 'IEEE Conference Paper',
+			description: 'Two-column IEEE format with abstract, keywords, table, and BibTeX citations.',
+			category: 'Academic',
+			icon: '📜',
+			badge: 'Popular'
+		},
+		{
+			id: 'resume',
+			name: 'Professional Resume / CV',
+			description: 'Clean single-page CV with Education, Experience, Projects, and Skills sections.',
+			category: 'Career',
+			icon: '💼'
+		},
+		{
+			id: 'beamer',
+			name: 'Presentation Slides (Beamer)',
+			description: 'Modern slide deck with Madrid theme, outline, block highlights, and conclusion frame.',
+			category: 'Presentation',
+			icon: '📽️'
+		}
+	];
 
 	let deletingId = $state<string | null>(null);
 
@@ -41,9 +74,10 @@
 		createError = null;
 
 		try {
-			const project = await api.createProject(newProjectName.trim());
+			const project = await api.createProject(newProjectName.trim(), selectedTemplate);
 			showCreateModal = false;
 			newProjectName = '';
+			selectedTemplate = 'article';
 			goto(resolve(`/project/${project.id}`));
 		} catch (err: unknown) {
 			createError = err instanceof Error ? err.message : 'Failed to create project';
@@ -75,6 +109,20 @@
 			hour: '2-digit',
 			minute: '2-digit'
 		});
+	}
+
+	let exportingProjectId = $state<string | null>(null);
+
+	async function handleExportProjectZip(proj: Project) {
+		if (exportingProjectId) return;
+		exportingProjectId = proj.id;
+		try {
+			await api.downloadProjectZip(proj.id, proj.name);
+		} catch (err: unknown) {
+			alert(err instanceof Error ? err.message : 'Failed to export project archive');
+		} finally {
+			exportingProjectId = null;
+		}
 	}
 
 	onMount(() => {
@@ -210,16 +258,31 @@
 							<ExternalLink class="h-3.5 w-3.5" />
 						</a>
 
-						{#if project.role === 'owner'}
+						<div class="flex items-center gap-1">
 							<button
-								onclick={() => handleDeleteProject(project.id, project.name)}
-								disabled={deletingId === project.id}
-								class="cursor-pointer rounded-md p-1.5 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50"
-								title="Delete Project"
+								onclick={() => handleExportProjectZip(project)}
+								disabled={exportingProjectId === project.id}
+								class="cursor-pointer rounded-md p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
+								title="Export Source (.zip)"
 							>
-								<Trash2 class="h-4 w-4" />
+								{#if exportingProjectId === project.id}
+									<Loader2 class="h-4 w-4 animate-spin text-slate-500" />
+								{:else}
+									<Download class="h-4 w-4" />
+								{/if}
 							</button>
-						{/if}
+
+							{#if project.role === 'owner'}
+								<button
+									onclick={() => handleDeleteProject(project.id, project.name)}
+									disabled={deletingId === project.id}
+									class="cursor-pointer rounded-md p-1.5 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50"
+									title="Delete Project"
+								>
+									<Trash2 class="h-4 w-4" />
+								</button>
+							{/if}
+						</div>
 					</div>
 				</div>
 			{/each}
@@ -233,9 +296,9 @@
 		class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-xs"
 	>
 		<div
-			class="animate-in fade-in zoom-in-95 w-full max-w-md rounded-2xl border border-slate-100 bg-white p-6 shadow-2xl duration-150"
+			class="animate-in fade-in zoom-in-95 w-full max-w-xl rounded-2xl border border-slate-100 bg-white p-6 shadow-2xl duration-150"
 		>
-			<div class="mb-4 flex items-center gap-3">
+			<div class="mb-5 flex items-center gap-3">
 				<div
 					class="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-lg text-emerald-700"
 				>
@@ -243,7 +306,7 @@
 				</div>
 				<div>
 					<h3 class="text-lg font-bold text-slate-900">New LaTeX Project</h3>
-					<p class="text-xs text-slate-500">Give your project a descriptive title</p>
+					<p class="text-xs text-slate-500">Choose a title and a starter template</p>
 				</div>
 			</div>
 
@@ -253,7 +316,7 @@
 				</div>
 			{/if}
 
-			<form onsubmit={handleCreateProject} class="space-y-4">
+			<form onsubmit={handleCreateProject} class="space-y-5">
 				<div>
 					<label for="projectName" class="mb-1 block text-xs font-semibold text-slate-700"
 						>Project Name</label
@@ -262,13 +325,55 @@
 						type="text"
 						id="projectName"
 						bind:value={newProjectName}
-						placeholder="e.g. NeurIPS 2026 Paper"
+						placeholder="e.g. Machine Learning Survey"
 						required
 						class="w-full rounded-lg border border-slate-300 px-3.5 py-2 text-sm focus:border-transparent focus:ring-2 focus:ring-emerald-500 focus:outline-none"
 					/>
 				</div>
 
-				<div class="flex items-center justify-end gap-3 pt-2">
+				<div>
+					<div class="mb-2 flex items-center justify-between">
+						<span class="block text-xs font-semibold text-slate-700">Select Template</span>
+						<span class="text-[11px] text-slate-400">All templates compile with TeX Live</span>
+					</div>
+					<div class="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+						{#each templates as tpl (tpl.id)}
+							<button
+								type="button"
+								onclick={() => {
+									selectedTemplate = tpl.id;
+								}}
+								class="relative flex cursor-pointer flex-col items-start rounded-xl border p-3 text-left transition {selectedTemplate ===
+								tpl.id
+									? 'border-emerald-600 bg-emerald-50/50 ring-2 ring-emerald-500/20 shadow-xs'
+									: 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/50'}"
+							>
+								{#if selectedTemplate === tpl.id}
+									<div
+										class="absolute top-2.5 right-2.5 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-600 text-white"
+									>
+										<Check class="h-2.5 w-2.5 stroke-[3]" />
+									</div>
+								{/if}
+
+								<div class="mb-1.5 flex items-center gap-2">
+									<span class="text-base">{tpl.icon}</span>
+									<span class="text-xs font-bold text-slate-800">{tpl.name}</span>
+									{#if tpl.badge}
+										<span
+											class="rounded-full bg-emerald-100 px-1.5 py-0.2 text-[9px] font-bold text-emerald-800 uppercase tracking-wider"
+										>
+											{tpl.badge}
+										</span>
+									{/if}
+								</div>
+								<p class="text-[11px] leading-relaxed text-slate-500">{tpl.description}</p>
+							</button>
+						{/each}
+					</div>
+				</div>
+
+				<div class="flex items-center justify-end gap-3 pt-2 border-t border-slate-100">
 					<button
 						type="button"
 						onclick={() => {

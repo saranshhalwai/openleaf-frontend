@@ -22,6 +22,14 @@ export interface ProjectMember {
 	createdAt: string;
 }
 
+export interface TemplateInfo {
+	id: string;
+	name: string;
+	description: string;
+	category: string;
+	icon: string;
+}
+
 export interface ProjectFile {
 	id: string;
 	projectId: string;
@@ -86,10 +94,14 @@ export class ApiClient {
 		return this.request<Project[]>('/api/projects');
 	}
 
-	async createProject(name: string): Promise<Project> {
+	async listTemplates(): Promise<TemplateInfo[]> {
+		return this.request<TemplateInfo[]>('/api/templates');
+	}
+
+	async createProject(name: string, template: string = 'article'): Promise<Project> {
 		return this.request<Project>('/api/projects', {
 			method: 'POST',
-			body: JSON.stringify({ name })
+			body: JSON.stringify({ name, template })
 		});
 	}
 
@@ -196,5 +208,31 @@ export class ApiClient {
 		return this.request<{ message: string }>(`/api/projects/${projectId}/members/${userId}`, {
 			method: 'DELETE'
 		});
+	}
+
+	async exportProjectZip(projectId: string): Promise<Blob> {
+		const headers = new Headers();
+		if (this.token) {
+			headers.set('Authorization', `Bearer ${this.token}`);
+		}
+		const response = await fetch(`${BACKEND_URL}/api/projects/${projectId}/export`, {
+			headers
+		});
+		if (!response.ok) {
+			throw new Error('Failed to export project archive');
+		}
+		return response.blob();
+	}
+
+	async downloadProjectZip(projectId: string, projectName: string): Promise<void> {
+		const blob = await this.exportProjectZip(projectId);
+		const url = window.URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = `${projectName.trim().replace(/\s+/g, '_') || 'project'}.zip`;
+		document.body.appendChild(a);
+		a.click();
+		document.body.removeChild(a);
+		window.URL.revokeObjectURL(url);
 	}
 }

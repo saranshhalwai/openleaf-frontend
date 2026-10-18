@@ -43,7 +43,7 @@
 
 		<!-- Social Login Buttons -->
 		<div class="mb-5 space-y-2.5">
-			<form method="post" action="?/signInSocial" use:enhance>
+			<form method="post" action="?/signInSocial">
 				<input type="hidden" name="provider" value="github" />
 				<button
 					type="submit"
@@ -58,7 +58,7 @@
 				</button>
 			</form>
 
-			<form method="post" action="?/signInSocial" use:enhance>
+			<form method="post" action="?/signInSocial">
 				<input type="hidden" name="provider" value="google" />
 				<button
 					type="submit"
